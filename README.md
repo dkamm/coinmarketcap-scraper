@@ -20,7 +20,7 @@ python scrape.py --outfile all.csv
 
 Filter on date range and coins:
 ```
-python scrape.py --outfile small.csv --start 20180101 --end 20180131 --symbols BTC ETH
+python scrape.py --outfile small.csv --start 2018-01-01 --end 2018-01-31 --symbols BTC ETH
 ```
 
 Read data into pandas dataframe:

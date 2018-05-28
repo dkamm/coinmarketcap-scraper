@@ -1,7 +1,7 @@
 import argparse
 import concurrent.futures
 import datetime
-from datetime import datetime as dt
+
 import bs4
 import numpy as np
 import pandas as pd
@@ -36,38 +36,42 @@ def parse_all_response(resp):
     for tr in table.tbody.find_all('tr'):
         slug = tr.get('id')[3:]  # remove 'id-' prefix from id
         rows.append([slug] + [get_val(x) for x in tr.find_all('td')])
+
     # index has the same information as #
     # name has the same value as symbol because its first <a> is the currency symbol
-    # slug also has basically the same information that name is supposed to so just drop name
+    # slug also has basically the same information as name
     return pd.DataFrame(columns=columns, data=rows)
 
 
 def parse_historical_coin_response(resp):
     soup = bs4.BeautifulSoup(resp.text, 'lxml')
     soup_hist = soup.find(id='historical-data')
-    if soup_hist is not None:
-        table = soup_hist.find('table')
-        columns = [x.text.lower().replace(' ', '') for x in table.thead.find_all('th')]
+    if not soup_hist:
+        return
 
-        def get_val(td):
-            # numeric columns store their value in this attribute in addition to text
-            val = td.get('data-format-value')
-            if val:
-                try:
-                    return np.float64(val)
-                except ValueError:
-                    return np.nan
-            return td.text
+    table = soup_hist.find('table')
+    # they added *'s to the end of some columns
+    columns = [x.text.lower().replace(' ', '').rstrip('*') for x in table.thead.find_all('th')]
 
-        rows = []
-        for tr in table.tbody.find_all('tr'):
-            if tr.td.text == 'No data was found for the selected time period.':
-                return pd.DataFrame(columns=columns).set_index('date')
-            rows.append([get_val(x) for x in tr.find_all('td')])
+    def get_val(td):
+        # numeric columns store their value in this attribute in addition to text
+        val = td.get('data-format-value')
+        if val:
+            try:
+                return np.float64(val)
+            except ValueError:
+                return np.nan
+        return td.text
 
-        df = pd.DataFrame(columns=columns, data=rows)
-        df['date'] = pd.to_datetime(df.date)
-        return df.set_index('date')
+    rows = []
+    for tr in table.tbody.find_all('tr'):
+        if tr.td.text == 'No data was found for the selected time period.':
+            return
+        rows.append([get_val(x) for x in tr.find_all('td')])
+
+    df = pd.DataFrame(columns=columns, data=rows)
+    df['date'] = pd.to_datetime(df.date)
+    return df.set_index('date')
 
 
 def all_url():
@@ -84,19 +88,15 @@ def markets_url(slug):
     return 'https://coinmarketcap.com/currencies/{slug}/#markets'.format(slug=slug)
 
 
-def valid_date(s):
-    try:
-        return dt.strptime(s, "%Y-%m-%d")
-    except ValueError:
-        msg = "Not a valid date: '{0}'.".format(s)
-        raise argparse.ArgumentTypeError(msg)
+def str_to_date(s):
+    return datetime.datetime.strptime(s, '%Y-%m-%d')
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--outfile', type=str)
-    parser.add_argument('--start', type=valid_date, default=datetime.date(2013, 4, 28))
-    parser.add_argument('--end', type=valid_date, default=datetime.date.today())
+    parser.add_argument('--start', type=str_to_date, default=datetime.date(2013, 4, 28))
+    parser.add_argument('--end', type=str_to_date, default=datetime.date.today())
     parser.add_argument('--symbols', type=str, nargs='*')
     args = parser.parse_args()
 
@@ -115,7 +115,6 @@ def main():
                                           total=len(urls))]
 
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        responses = [r for r in responses if r is not None]
         historical_coin_dfs = [x for x in tqdm.tqdm(executor.map(parse_historical_coin_response, responses),
                                                     desc='parsing historical coin pages',
                                                     total=len(responses)) if x is not None]
