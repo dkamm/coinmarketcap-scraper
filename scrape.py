@@ -39,33 +39,35 @@ def parse_all_response(resp):
     # index has the same information as #
     # name has the same value as symbol because its first <a> is the currency symbol
     # slug also has basically the same information that name is supposed to so just drop name
-    return pd.DataFrame(columns=columns, data=rows).drop(['name', '#'], axis=1)
+    return pd.DataFrame(columns=columns, data=rows)
 
 
 def parse_historical_coin_response(resp):
     soup = bs4.BeautifulSoup(resp.text, 'lxml')
-    table = soup.find(id='historical-data').find('table')
-    columns = [x.text.lower().replace(' ', '') for x in table.thead.find_all('th')]
+    soup_hist = soup.find(id='historical-data')
+    if soup_hist is not None:
+        table = soup_hist.find('table')
+        columns = [x.text.lower().replace(' ', '') for x in table.thead.find_all('th')]
 
-    def get_val(td):
-        # numeric columns store their value in this attribute in addition to text
-        val = td.get('data-format-value')
-        if val:
-            try:
-                return np.float64(val)
-            except ValueError:
-                return np.nan
-        return td.text
+        def get_val(td):
+            # numeric columns store their value in this attribute in addition to text
+            val = td.get('data-format-value')
+            if val:
+                try:
+                    return np.float64(val)
+                except ValueError:
+                    return np.nan
+            return td.text
 
-    rows = []
-    for tr in table.tbody.find_all('tr'):
-        if tr.td.text == 'No data was found for the selected time period.':
-            return pd.DataFrame(columns=columns).set_index('date')
-        rows.append([get_val(x) for x in tr.find_all('td')])
+        rows = []
+        for tr in table.tbody.find_all('tr'):
+            if tr.td.text == 'No data was found for the selected time period.':
+                return pd.DataFrame(columns=columns).set_index('date')
+            rows.append([get_val(x) for x in tr.find_all('td')])
 
-    df = pd.DataFrame(columns=columns, data=rows)
-    df['date'] = pd.to_datetime(df.date)
-    return df.set_index('date')
+        df = pd.DataFrame(columns=columns, data=rows)
+        df['date'] = pd.to_datetime(df.date)
+        return df.set_index('date')
 
 
 def all_url():
@@ -113,9 +115,10 @@ def main():
                                           total=len(urls))]
 
     with concurrent.futures.ProcessPoolExecutor() as executor:
+        responses = [r for r in responses if r is not None]
         historical_coin_dfs = [x for x in tqdm.tqdm(executor.map(parse_historical_coin_response, responses),
                                                     desc='parsing historical coin pages',
-                                                    total=len(responses))]
+                                                    total=len(responses)) if x is not None]
 
     for slug, symbol, historical_coin_df in zip(slugs, symbols, historical_coin_dfs):
         historical_coin_df['slug'] = slug
